@@ -131,6 +131,26 @@ useEffect(() => {
     r.name.toLowerCase().includes(search.toLowerCase())
   ), [liveRegions, search]);
 
+if (loading) {
+  return (
+    <div style={{ padding: "40px", textAlign: "center" }}>
+      Loading climate data...
+    </div>
+  );
+}
+
+if (error) {
+  return (
+    <div style={{ padding: "40px", textAlign: "center" }}>
+      <h2>Unable to load climate data</h2>
+      <p>{error}</p>
+      <p>Please make sure the Flask backend is running.</p>
+    </div>
+  );
+}
+
+
+
   return (
     <div className={dark ? "app dark" : "app"}>
       <aside className={sidebar ? "sidebar open" : "sidebar"}>
