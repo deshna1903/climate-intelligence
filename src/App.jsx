@@ -16,7 +16,7 @@ const regions = [
   { id: 3, name: "Nashik", temp: 41.5, heat: 44.3, humidity: 34, wind: 6.0, risk: "High", probability: 82.7, station: "Nashik Weather Station", advisory: "High heatwave risk detected." },
   { id: 4, name: "Nagpur", temp: 43.0, heat: 45.8, humidity: 30, wind: 5.0, risk: "Severe", probability: 89.3, station: "Nagpur Central Station", advisory: "Severe heat conditions are expected." },
   { id: 5, name: "Aurangabad", temp: 42.0, heat: 44.9, humidity: 32, wind: 6.0, risk: "High", probability: 78.6, station: "Aurangabad Station", advisory: "High heatwave risk detected." }
-];
+]; 
 
 const hourly = [
   { time: "9 AM", temp: 38.5, heat: 41.2 }, { time: "10 AM", temp: 40.2, heat: 43.5 },
@@ -70,7 +70,7 @@ function riskClass(risk) {
 
 function App() {
   const [page, setPage] = useState("Dashboard");
-  const [selected, setSelected] = useState(regions[0]);
+const [selected, setSelected] = useState(regions[0]);
   const [sidebar, setSidebar] = useState(true);
   const [dark, setDark] = useState(false);
   const [search, setSearch] = useState("");
@@ -80,51 +80,102 @@ function App() {
   const [notifications, setNotifications] = useState(alerts);
   const [displayName, setDisplayName] = useState("Deshna Shah");
   const [dashboardData, setDashboardData] = useState([]);
+  const [stationData, setStationData] = useState([]);
 const [loading, setLoading] = useState(true);
 const [error, setError] = useState("");
 
+
 useEffect(() => {
-  fetch("http://127.0.0.1:5000/dashboard")
-    .then((response) => {
+  let active = true;
+
+  async function loadDashboard() {
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:5000/dashboard"
+      );
+
       if (!response.ok) {
-        throw new Error("Failed to fetch dashboard data");
+        throw new Error("Dashboard API failed");
       }
-      return response.json();
-    })
-    .then((data) => {
-      setDashboardData(data);
-      setLoading(false);
-    })
-    .catch((err) => {
-      console.error(err);
-      setError("Could not connect to Flask backend");
-      setLoading(false);
-    });
+
+      const data = await response.json();
+
+      if (!Array.isArray(data)) {
+        throw new Error("Invalid dashboard response");
+      }
+
+      if (active) {
+        setDashboardData(data);
+        setError("");
+      }
+    } catch (err) {
+      console.error("Dashboard loading error:", err);
+
+      if (active) {
+        setError("Could not connect to Flask backend");
+      }
+    } finally {
+      if (active) {
+        setLoading(false);
+      }
+    }
+  }
+
+  loadDashboard();
+
+  return () => {
+    active = false;
+  };
 }, []);
 
-console.log("Dashboard data:", dashboardData);
+console.log("Station data:", stationData);
+console.log("Selected region:", selected);
 
-const liveRegions = dashboardData.map((item, index) => ({
-  id: index + 1,
-  name: item.region,
-  temp: item.temperature,
-  heat: item.heat_index,
-  humidity: item.humidity,
-  pressure: item.pressure,
-  wind: item.wind_speed,
-  windDirection: item.wind_direction,
-  cloudCover: item.cloud_cover,
-  risk: item.risk_level,
-  probability: item.probability
-}));
+const liveRegions = dashboardData.map((item, index) => {
+  const regionStation = stationData.find(
+    (station) => station.region === item.region
+  );
 
+  return {
+    id: index + 1,
+    name: item.region,
+    temp: item.temperature,
+    heat: item.heat_index,
+    humidity: item.humidity,
+    pressure: item.pressure,
+    wind: item.wind_speed,
+    windDirection: item.wind_direction,
+    cloudCover: item.cloud_cover,
+    risk: item.risk_level,
+    probability: item.probability,
+    station: regionStation?.station_name || "Station unavailable",
+    stationStatus: regionStation?.status || "Unknown"
+  };
+});
 useEffect(() => {
-  if (liveRegions.length > 0 && !selected) {
-    setSelected(liveRegions[0]);
-  }
-}, [liveRegions, selected]);
+  if (liveRegions.length === 0) return;
 
+  setSelected((previous) => {
+    const matchingRegion =
+      liveRegions.find((r) => r.name === previous?.name) ||
+      liveRegions[0];
 
+    if (
+      previous &&
+      previous.name === matchingRegion.name &&
+      previous.temp === matchingRegion.temp &&
+      previous.heat === matchingRegion.heat &&
+      previous.pressure === matchingRegion.pressure &&
+      previous.cloudCover === matchingRegion.cloudCover &&
+      previous.station === matchingRegion.station &&
+      previous.stationStatus === matchingRegion.stationStatus
+    ) {
+      return previous;
+    }
+
+    return matchingRegion;
+  });
+}, [dashboardData, stationData]);
 
   const filteredRegions = useMemo(() =>
   liveRegions.filter(r =>
@@ -199,13 +250,17 @@ if (error) {
           </div>
 
           {page === "Dashboard" && <Dashboard selected={selected} setSelected={setSelected} filteredRegions={filteredRegions} />}
-          {page === "Live Weather" && <LiveWeather selected={selected} setSelected={setSelected} />}
+          {page === "Live Weather" && <LiveWeather
+  selected={selected}
+  setSelected={setSelected}
+  regions={liveRegions}
+/>}
           {page === "Regions & Stations" && <Regions regions={filteredRegions} selected={selected} setSelected={setSelected} />}
-          {page === "Forecast" && <Forecast />}
+          {page === "Forecast" && <Forecast selected={selected} />}
           {page === "AI Prediction" && <Prediction selected={selected} />}
-          {page === "Alerts & Advisories" && <Alerts />}
+          {page === "Alerts & Advisories" && <Alerts regions={liveRegions} />}
           {page === "Stakeholders" && <Stakeholders />}
-          {page === "Historical Analytics" && <Analytics />}
+          {page === "Historical Analytics" && <Analytics regions={liveRegions} />}
           {page === "Settings" && <SettingsPage dark={dark} setDark={setDark} />}
         </div>
       </main>
@@ -218,6 +273,12 @@ function KPI({icon: Icon, label, value, sub, tone=""}) {
 }
 
 function Dashboard({selected, setSelected, filteredRegions}) {
+  const [showStations, setShowStations] = useState(false);
+
+
+   if (!selected) {
+    return <p>Loading dashboard data...</p>;
+  }
   return <>
     <div className="kpis">
   <KPI
@@ -263,7 +324,59 @@ function Dashboard({selected, setSelected, filteredRegions}) {
 
     <div className="grid-main">
       <section className="panel hero-panel">
-        <div className="panel-head"><div><span className="section-kicker">CURRENT HEATWAVE STATUS</span><h2>{selected.name} <span className={"risk-pill " + riskClass(selected.risk)}>{selected.risk}</span></h2></div><button className="select-btn"><Navigation size={15}/> {selected.station} <ChevronDown size={15}/></button></div>
+        <div className="panel-head"><div><span className="section-kicker">CURRENT HEATWAVE STATUS</span><h2>{selected.name} <span className={"risk-pill " + riskClass(selected.risk)}>{selected.risk}</span></h2></div>
+<div style={{ position: "relative" }}>
+  <button
+    type="button"
+    className="select-btn"
+    onClick={() => setShowStations(!showStations)}
+  >
+    <Navigation size={15} />
+    {selected.station || selected.name + " Station"}
+    <ChevronDown size={15} />
+  </button>
+
+  {showStations && (
+    <div
+      className="panel"
+      style={{
+        position: "absolute",
+        top: "100%",
+        right: 0,
+        zIndex: 50,
+        minWidth: 220,
+        maxHeight: 250,
+        overflowY: "auto",
+        padding: 8
+      }}
+    >
+      {filteredRegions.map((r) => (
+        <button
+          key={r.id}
+          type="button"
+          onClick={() => {
+            setSelected(r);
+            setShowStations(false);
+          }}
+          style={{
+            display: "block",
+            width: "100%",
+            padding: 10,
+            textAlign: "left",
+            border: "none",
+            borderRadius: 6,
+            background: "transparent",
+            color: "inherit",
+            cursor: "pointer"
+          }}
+        >
+          {r.station || r.name + " Station"}
+        </button>
+      ))}
+    </div>
+  )}
+</div>
+</div>
         <div className="hero-body">
           <div className="temperature"><Sun size={35}/><strong>{selected.temp}°</strong><span>Feels like {selected.heat}°C</span></div>
           <div className="weather-grid">
@@ -276,14 +389,85 @@ function Dashboard({selected, setSelected, filteredRegions}) {
         <div className="chart-wrap"><div className="chart-title"><span>Today's temperature trend</span><span className="legend"><i></i> Temperature <i className="heat"></i> Heat Index</span></div>
           <ResponsiveContainer width="100%" height={190}><AreaChart data={hourly}><defs><linearGradient id="temp" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ff8a3d" stopOpacity=".28"/><stop offset="100%" stopColor="#ff8a3d" stopOpacity="0"/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="time"/><YAxis domain={[35,50]}/><Tooltip/><Area type="monotone" dataKey="temp" stroke="#ff7a2f" fill="url(#temp)" strokeWidth={2.5}/><Line type="monotone" dataKey="heat" stroke="#ef4444" strokeWidth={2.5} dot={false}/></AreaChart></ResponsiveContainer>
         </div>
+            </section>
+
+      <section className="panel advisory-panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">EARLY WARNING</span>
+            <h2>Heatwave Advisory</h2>
+          </div>
+          <span className={"risk-pill " + riskClass(selected.risk)}>
+            {selected.risk} Risk
+          </span>
+        </div>
+
+        <div className="advisory-content">
+          <div className="advisory-icon">
+            <ShieldAlert size={28} />
+          </div>
+
+          <div>
+            <strong>
+              {selected.name} is currently under {selected.risk.toLowerCase()} heat risk.
+            </strong>
+
+            <p>
+              {selected.risk === "Severe"
+                ? "Extreme heat conditions detected. Stay hydrated, avoid direct sunlight, and limit outdoor activity."
+                : selected.risk === "High"
+                ? "High heat conditions detected. Stay hydrated, avoid prolonged outdoor exposure, and take regular breaks."
+                : "Moderate heat conditions detected. Stay hydrated and take regular breaks during outdoor activity."}
+            </p>
+          </div>
+        </div>
+
+        <div className="advisory-stats">
+          <span>🌡️ {selected.temp}°C temperature</span>
+          <span>🔥 {selected.heat}°C heat index</span>
+          <span>📍 {selected.name}</span>
+        </div>
       </section>
 
       <section className="panel risk-panel">
         <div className="panel-head"><div><span className="section-kicker">REGION RISK MAP</span><h2>Heatwave Monitor</h2></div><span className="live-tag">● LIVE</span></div>
         <div className="fake-map">
           <div className="map-shape"></div>
-          {regions.map((r,i) => <button key={r.id} className={"map-pin p"+i+" "+riskClass(r.risk)} onClick={() => setSelected(r)} title={r.name}><span></span><b>{r.name}</b></button>)}
-          <div className="map-caption"><Globe2 size={15}/> Maharashtra • 5 monitored regions</div>
+
+{filteredRegions.map((r, i) => {
+  const positions = [
+    { left: "43%", top: "37%" },
+    { left: "25%", top: "44%" },
+    { left: "36%", top: "25%" },
+    { left: "67%", top: "40%" },
+    { left: "55%", top: "64%" },
+    { left: "34%", top: "73%" },
+    { left: "49%", top: "59%" },
+    { left: "73%", top: "55%" },
+    { left: "58%", top: "31%" },
+    { left: "27%", top: "52%" }
+  ];
+
+  const position = positions[i % positions.length];
+
+  return (
+    <button
+      key={r.id}
+      className={"map-pin " + riskClass(r.risk)}
+      style={{
+        position: "absolute",
+        left: position.left,
+        top: position.top
+      }}
+      onClick={() => setSelected(r)}
+      title={r.name}
+    >
+      <span></span>
+      <b>{r.name}</b>
+    </button>
+  );
+})}
+          <div className="map-caption"><Globe2 size={15}/> Maharashtra • {filteredRegions.length} monitored regions</div>
         </div>
         <div className="risk-list">{filteredRegions.map(r => <button className="risk-row" key={r.id} onClick={() => setSelected(r)}><span className={"risk-dot "+riskClass(r.risk)}></span><strong>{r.name}</strong><span>{r.temp}°C</span><em>{r.risk}</em></button>)}</div>
       </section>
@@ -305,48 +489,1052 @@ function Dashboard({selected, setSelected, filteredRegions}) {
 
 function MiniWeather({icon: Icon,label,value}) { return <div className="mini-weather"><Icon size={17}/><span>{label}</span><strong>{value}</strong></div> }
 
-function LiveWeather({selected,setSelected}) {
-  return <><div className="region-tabs">{regions.map(r=><button className={selected.id===r.id?"selected":""} onClick={()=>setSelected(r)} key={r.id}>{r.name}</button>)}</div><div className="weather-detail"><section className="panel current-card"><div className="sun-large"><Sun size={54}/></div><span>Current conditions</span><strong>{selected.temp}°C</strong><b>Heat Index {selected.heat}°C</b><em className={"risk-pill "+riskClass(selected.risk)}>{selected.risk} Risk</em></section><section className="panel weather-metrics"><h2>Atmospheric conditions</h2><div className="metric-grid"><Metric icon={Droplets} name="Humidity" val={selected.humidity+"%"}/><Metric icon={Wind} name="Wind Speed" val={selected.wind+" km/h"}/><Metric icon={Gauge} name="Pressure" val={selected.pressure + " hPa"}/>
-<Metric icon={CloudSun} name="Cloud Cover" val={selected.cloudCover + "%"}/>
-<Metric icon={Navigation} name="Wind Direction" val={selected.windDirection}/><Metric icon={Activity} name="Station Status" val="Active"/></div></section></div><section className="panel"><div className="panel-head"><div><span className="section-kicker">LIVE SENSOR DATA</span><h2>Temperature & Heat Index</h2></div></div><ResponsiveContainer width="100%" height={300}><LineChart data={hourly}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="time"/><YAxis/><Tooltip/><Line dataKey="temp" name="Temperature" stroke="#ff7a2f" strokeWidth={3}/><Line dataKey="heat" name="Heat Index" stroke="#ef4444" strokeWidth={3}/></LineChart></ResponsiveContainer></section></>;
+
+function LiveWeather({ selected, setSelected, regions: rs = [] }) {
+  if (!selected) {
+    return <p>Loading region data...</p>;
+  }
+
+  const display = (value, unit = "") =>
+    value == null ? "N/A" : `${value}${unit}`;
+
+  return (
+    <>
+      <div className="region-tabs">
+        {rs.map((r) => (
+          <button
+            key={r.id}
+            className={selected.name === r.name ? "selected" : ""}
+            onClick={() => setSelected(r)}
+          >
+            {r.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="weather-detail">
+        <section className="panel current-card">
+          <div className="sun-large">
+            <Sun size={54} />
+          </div>
+          <span>Current conditions</span>
+          <strong>{display(selected.temp, "°C")}</strong>
+          <b>Heat Index {display(selected.heat, "°C")}</b>
+          <em className={"risk-pill " + riskClass(selected.risk || "Moderate")}>
+            {selected.risk || "Unknown"} Risk
+          </em>
+        </section>
+
+        <section className="panel weather-metrics">
+          <h2>Atmospheric conditions</h2>
+          <div className="metric-grid">
+            <Metric icon={Droplets} name="Humidity"
+              val={display(selected.humidity, "%")} />
+            <Metric icon={Wind} name="Wind Speed"
+              val={display(selected.wind, " km/h")} />
+            <Metric icon={Gauge} name="Pressure"
+              val={display(selected.pressure, " hPa")} />
+            <Metric icon={CloudSun} name="Cloud Cover"
+              val={display(selected.cloudCover, "%")} />
+            <Metric icon={Navigation} name="Wind Direction"
+              val={display(selected.windDirection)} />
+            <Metric icon={Activity} name="Station Status"
+              val={selected.stationStatus || "Not available"} />
+          </div>
+        </section>
+      </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">SENSOR DATA</span>
+            <h2>Temperature & Heat Index</h2>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 12 }}>
+          Illustrative hourly trend — not live sensor history.
+        </p>
+
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={hourly}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="time" />
+            <YAxis />
+            <Tooltip />
+            <Line dataKey="temp" name="Temperature"
+              stroke="#ff7a2f" strokeWidth={3} />
+            <Line dataKey="heat" name="Heat Index"
+              stroke="#ef4444" strokeWidth={3} />
+          </LineChart>
+        </ResponsiveContainer>
+      </section>
+    </>
+  );
 }
+
 function Metric({icon:Icon,name,val}) { return <div className="metric"><div><Icon size={19}/></div><span>{name}</span><strong>{val}</strong></div> }
 
-function Regions({regions:rs,selected,setSelected}) {
-  return <section className="panel table-panel"><div className="panel-head"><div><span className="section-kicker">MONITORING NETWORK</span><h2>Regions & Weather Stations</h2></div><span className="count-pill">{rs.length} regions</span></div><div className="table-scroll"><table><thead><tr><th>Region</th><th>Weather Station</th><th>Temperature</th><th>Heat Index</th><th>Risk</th><th>Probability</th><th>Status</th></tr></thead><tbody>{rs.map(r=><tr key={r.id} onClick={()=>setSelected(r)}><td><strong>{r.name}</strong><small>Maharashtra</small></td><td>{r.station}</td><td><b>{r.temp}°C</b></td><td>{r.heat}°C</td><td><span className={"risk-pill "+riskClass(r.risk)}>{r.risk}</span></td><td>{r.probability}%</td><td><span className="status"><i></i> Active</span></td></tr>)}</tbody></table></div></section>
+
+function Regions({ regions: rs, selected, setSelected }) {
+  const [stations, setStations] = useState([]);
+  const [regionDetails, setRegionDetails] = useState([]);
+  const [loadingStations, setLoadingStations] = useState(true);
+  const [stationError, setStationError] = useState("");
+  const [expandedRegion, setExpandedRegion] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadNetwork() {
+      try {
+        const [stationResponse, regionResponse] =
+          await Promise.all([
+            fetch("http://127.0.0.1:5000/stations"),
+            fetch("http://127.0.0.1:5000/regions")
+          ]);
+
+        if (!stationResponse.ok || !regionResponse.ok) {
+          throw new Error("Unable to load monitoring network");
+        }
+
+        const stationData = await stationResponse.json();
+        const regionData = await regionResponse.json();
+
+        if (!Array.isArray(stationData) ||
+            !Array.isArray(regionData)) {
+          throw new Error("Invalid API response");
+        }
+
+        if (active) {
+          setStations(stationData);
+          setRegionDetails(regionData);
+          setStationError("");
+        }
+      } catch (error) {
+        console.error("Monitoring network error:", error);
+
+        if (active) {
+          setStationError(
+            "Could not load stations and regions from Flask."
+          );
+        }
+      } finally {
+        if (active) setLoadingStations(false);
+      }
+    }
+
+    loadNetwork();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function getStations(regionName) {
+    return stations.filter(
+      (station) => station.region === regionName
+    );
+  }
+
+  function getRegionDetails(regionName) {
+    return regionDetails.find(
+      (region) => region.region_name === regionName
+    );
+  }
+
+  return (
+    <section className="panel table-panel">
+      <div className="panel-head">
+        <div>
+          <span className="section-kicker">
+            POSTGRESQL MONITORING NETWORK
+          </span>
+          <h2>Regions & Weather Stations</h2>
+          <p className="panel-subtitle">
+            Regional weather conditions and registered
+            monitoring stations.
+          </p>
+        </div>
+
+        <span className="count-pill">
+          {rs.length} regions
+        </span>
+      </div>
+
+      {loadingStations && (
+        <p>Loading weather stations...</p>
+      )}
+
+      {stationError && (
+        <p>{stationError}</p>
+      )}
+
+      {!loadingStations && !stationError && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Weather Station</th>
+                <th>Temperature</th>
+                <th>Heat Index</th>
+                <th>Risk</th>
+                <th>Probability</th>
+                <th>Status</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {rs.map((r) => {
+                const regionStations = getStations(r.name);
+                const details = getRegionDetails(r.name);
+                const isExpanded = expandedRegion === r.name;
+
+                return (
+                  <React.Fragment key={r.id}>
+                    <tr>
+                      <td>
+                        <strong>{r.name}</strong>
+                        <small>{details?.state || "Unknown state"}</small>
+                      </td>
+
+                      <td>
+                        {regionStations.length
+                          ? regionStations
+                              .map((s) => s.station_name)
+                              .join(", ")
+                          : "No station registered"}
+                      </td>
+
+                      <td><b>{r.temp}°C</b></td>
+                      <td>{r.heat}°C</td>
+
+                      <td>
+                        <span
+                          className={
+                            "risk-pill " + riskClass(r.risk)
+                          }
+                        >
+                          {r.risk}
+                        </span>
+                      </td>
+
+                      <td>{r.probability}%</td>
+
+                      <td>
+                        {regionStations.length
+                          ? regionStations
+                              .map((s) => s.status || "Unknown")
+                              .join(", ")
+                          : "No station"}
+                      </td>
+
+                      <td>
+                        <button
+                          type="button"
+                          className="small-action"
+                          onClick={() => {
+                            setSelected(r);
+                            setExpandedRegion(
+                              isExpanded ? null : r.name
+                            );
+                          }}
+                        >
+                          {isExpanded ? "Hide" : "View"}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={8}>
+                          <div className="alert-details">
+                            <h3>{r.name} — Region Details</h3>
+
+                            <p>
+                              <strong>State:</strong>{" "}
+                              {details?.state || "Not available"}
+                            </p>
+
+                            <p>
+                              <strong>Climate Zone:</strong>{" "}
+                              {details?.climate_zone || "Not available"}
+                            </p>
+
+                            <p>
+                              <strong>Population:</strong>{" "}
+                              {details?.population != null
+                                ? Number(details.population)
+                                    .toLocaleString("en-IN")
+                                : "Not available"}
+                            </p>
+
+                            <p>
+                              <strong>Registered Stations:</strong>{" "}
+                              {regionStations.length}
+                            </p>
+
+                            {regionStations.map((station) => (
+                              <p key={station.station_id}>
+                                <strong>{station.station_name}</strong>
+                                {" — "}
+                                {station.status || "Unknown status"}
+                              </p>
+                            ))}
+
+                            <p>
+                              <strong>Current Heatwave Risk:</strong>{" "}
+                              {r.risk}
+                            </p>
+
+                            <p>
+                              <strong>Heatwave Probability:</strong>{" "}
+                              {r.probability}%
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
 }
 
-function Forecast() {
- return <><div className="forecast-cards">{forecast.map(f=><div className="forecast-card" key={f.day}><span>{f.day}</span><Sun size={28}/><strong>{f.temp}°C</strong><small>Feels {f.heat}°C</small><em className={"risk-pill "+riskClass(f.risk)}>{f.risk}</em></div>)}</div><section className="panel"><div className="panel-head"><div><span className="section-kicker">5-DAY OUTLOOK</span><h2>Temperature Forecast</h2></div></div><ResponsiveContainer width="100%" height={330}><AreaChart data={forecast}><defs><linearGradient id="fc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ff7a2f" stopOpacity=".25"/><stop offset="100%" stopColor="#ff7a2f" stopOpacity="0"/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="day"/><YAxis domain={[30,50]}/><Tooltip/><Area type="monotone" dataKey="temp" stroke="#ff7a2f" fill="url(#fc)" strokeWidth={3}/><Line type="monotone" dataKey="heat" stroke="#ef4444" strokeWidth={3}/></AreaChart></ResponsiveContainer></section></>;
+
+
+function Forecast({ selected }) {
+  const forecast = [
+    { dayOffset: 0, tempChange: 0, heatChange: 0 },
+    { dayOffset: 1, tempChange: 0.5, heatChange: 0.6 },
+    { dayOffset: 2, tempChange: -0.6, heatChange: -0.8 },
+    { dayOffset: 3, tempChange: -1.5, heatChange: -1.7 },
+    { dayOffset: 4, tempChange: -2.3, heatChange: -2.5 }
+  ].map((item, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() + item.dayOffset);
+
+    const temp = Number((selected.temp + item.tempChange).toFixed(1));
+    const heat = Number((selected.heat + item.heatChange).toFixed(1));
+
+    const risk =
+      heat >= 45 ? "Severe" :
+      heat >= 43 ? "High" :
+      "Moderate";
+
+    return {
+      day: index === 0
+        ? "Today"
+        : index === 1
+          ? "Tomorrow"
+          : date.toLocaleDateString("en-IN", {
+              day: "numeric",
+              month: "short"
+            }),
+      temp,
+      heat,
+      risk
+    };
+  });
+
+  return (
+    <div className="forecast-page">
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">ILLUSTRATIVE 5-DAY OUTLOOK</span>
+            <h2>{selected.name} Temperature Forecast</h2>
+            <p className="panel-subtitle">
+              Demonstration estimates based on current conditions.
+              These are not verified weather forecasts.
+            </p>
+          </div>
+          <span className={"risk-pill " + riskClass(selected.risk)}>
+            Current: {selected.risk}
+          </span>
+        </div>
+
+        <div className="forecast-cards">
+          {forecast.map((f) => (
+            <div className="forecast-card" key={f.day}>
+              <span>{f.day}</span>
+              <Sun size={28} />
+              <strong>{f.temp}°C</strong>
+              <small>Heat index {f.heat}°C</small>
+              <em className={"risk-pill " + riskClass(f.risk)}>
+                {f.risk}
+              </em>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">TEMPERATURE & HEAT INDEX</span>
+            <h2>Five-Day Trend</h2>
+          </div>
+        </div>
+
+        <ResponsiveContainer width="100%" height={330}>
+          <AreaChart data={forecast}>
+            <defs>
+              <linearGradient id="forecastTemp" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#ff7a2f" stopOpacity={0.25} />
+                <stop offset="100%" stopColor="#ff7a2f" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="day" />
+            <YAxis domain={["dataMin - 3", "dataMax + 3"]} />
+            <Tooltip />
+            <Area
+              type="monotone"
+              dataKey="temp"
+              name="Temperature (°C)"
+              stroke="#ff7a2f"
+              fill="url(#forecastTemp)"
+              strokeWidth={3}
+            />
+            <Line
+              type="monotone"
+              dataKey="heat"
+              name="Heat Index (°C)"
+              stroke="#ef4444"
+              strokeWidth={3}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">RISK OUTLOOK</span>
+            <h2>Daily Heat Risk</h2>
+          </div>
+        </div>
+
+        <div className="forecast-risk-list">
+          {forecast.map((f) => (
+            <div className="risk-row" key={f.day}>
+              <strong>{f.day}</strong>
+              <span>{f.heat}°C heat index</span>
+              <em className={"risk-pill " + riskClass(f.risk)}>
+                {f.risk}
+              </em>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
 }
 
-function Prediction({selected}) {
- return <div className="prediction-page"><section className="panel prediction-hero"><div><span className="section-kicker">AI HEATWAVE PREDICTION • MODEL v1.0</span><h2>{selected.name} Heatwave Risk</h2><p>Prediction generated from weather and forecast conditions.</p></div><div className="big-prob"><strong>{selected.probability}%</strong><span>Heatwave Probability</span><em className={"risk-pill "+riskClass(selected.risk)}>{selected.risk} Risk</em></div></section><div className="factor-grid"><Factor icon="🌡️" title="Temperature" value={selected.temp+"°C"} note="Elevated" /><Factor icon="💧" title="Humidity" value={selected.humidity+"%"} note="Low" /><Factor icon="🌬️" title="Wind Speed" value={selected.wind+" km/h"} note="Low" /><Factor icon="🔥" title="Heat Index" value={selected.heat+"°C"} note="Elevated" /></div><section className="panel"><div className="panel-head"><div><span className="section-kicker">INTERPRETATION</span><h2>Why is the risk elevated?</h2></div></div><div className="reason-list"><div>🌡️ <span><strong>High temperature</strong><small>Temperature is above the project's high-risk threshold.</small></span></div><div>💧 <span><strong>Low humidity</strong><small>Dry atmospheric conditions are contributing to heat stress.</small></span></div><div>📈 <span><strong>Forecast conditions</strong><small>Forecasted heat index remains elevated.</small></span></div></div></section></div>
+
+
+function Prediction({ selected }) {
+  const temperature = Number(selected.temp);
+  const humidity = Number(selected.humidity);
+  const wind = Number(selected.wind);
+  const heatIndex = Number(selected.heat);
+  const probability = Number(selected.probability);
+
+  const risk = selected.risk || "Unknown";
+
+  const factors = [
+    {
+      icon: "🌡️",
+      title: "Temperature",
+      value: `${temperature}°C`,
+      note:
+        temperature >= 40
+          ? "Very High"
+          : temperature >= 35
+          ? "High"
+          : "Moderate"
+    },
+    {
+      icon: "💧",
+      title: "Humidity",
+      value: `${humidity}%`,
+      note:
+        humidity >= 60
+          ? "High"
+          : humidity >= 40
+          ? "Moderate"
+          : "Low"
+    },
+    {
+      icon: "🌬️",
+      title: "Wind Speed",
+      value: `${wind} km/h`,
+      note:
+        wind >= 15
+          ? "Strong"
+          : wind >= 8
+          ? "Moderate"
+          : "Light"
+    },
+    {
+      icon: "🔥",
+      title: "Heat Index",
+      value: `${heatIndex}°C`,
+      note:
+        heatIndex >= 45
+          ? "Severe"
+          : heatIndex >= 43
+          ? "High"
+          : "Moderate"
+    }
+  ];
+
+  const explanations = [
+    {
+      icon: "🌡️",
+      title: "Temperature Conditions",
+      description:
+        temperature >= 40
+          ? `The temperature in ${selected.name} is ${temperature}°C, indicating extremely hot conditions.`
+          : temperature >= 35
+          ? `The temperature in ${selected.name} is ${temperature}°C, indicating elevated heat exposure.`
+          : `The temperature in ${selected.name} is ${temperature}°C.`
+    },
+    {
+      icon: "💧",
+      title: "Humidity Conditions",
+      description:
+        humidity >= 60
+          ? `Humidity is ${humidity}%. High humidity can make it harder for the body to cool itself through sweating.`
+          : humidity >= 40
+          ? `Humidity is ${humidity}%, indicating moderate atmospheric moisture.`
+          : `Humidity is ${humidity}%, indicating relatively dry atmospheric conditions.`
+    },
+    {
+      icon: "🔥",
+      title: "Heat Index",
+      description:
+        heatIndex >= 45
+          ? `The heat index is ${heatIndex}°C, indicating severe apparent heat exposure.`
+          : heatIndex >= 43
+          ? `The heat index is ${heatIndex}°C, indicating high apparent heat exposure.`
+          : `The heat index is ${heatIndex}°C, indicating comparatively lower apparent heat exposure.`
+    },
+    {
+      icon: "🌬️",
+      title: "Wind Conditions",
+      description:
+        wind < 8
+          ? `Wind speed is ${wind} km/h. Light winds may provide limited convective cooling.`
+          : `Wind speed is ${wind} km/h. Air movement can influence outdoor heat exposure.`
+    }
+  ];
+
+  return (
+    <div className="prediction-page">
+
+      <section className="panel prediction-hero">
+        <div>
+          <span className="section-kicker">
+            HEATWAVE RISK ASSESSMENT
+          </span>
+
+          <h2>{selected.name} Heatwave Risk</h2>
+
+          <p>
+            Risk assessment based on the weather data
+            available for the selected region.
+          </p>
+        </div>
+
+        <div className="big-prob">
+          <strong>
+            {Number.isFinite(probability)
+              ? `${probability}%`
+              : "N/A"}
+          </strong>
+
+          <span>Stored Heatwave Probability</span>
+
+          <em className={"risk-pill " + riskClass(risk)}>
+            {risk} Risk
+          </em>
+        </div>
+      </section>
+
+      <div className="factor-grid">
+        {factors.map((factor) => (
+          <Factor
+            key={factor.title}
+            icon={factor.icon}
+            title={factor.title}
+            value={factor.value}
+            note={factor.note}
+          />
+        ))}
+      </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">
+              WEATHER FACTOR ANALYSIS
+            </span>
+
+            <h2>Understanding the Risk</h2>
+          </div>
+        </div>
+
+        <div className="reason-list">
+          {explanations.map((item) => (
+            <div key={item.title}>
+              {item.icon}
+
+              <span>
+                <strong>{item.title}</strong>
+                <small>{item.description}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">
+              ASSESSMENT SUMMARY
+            </span>
+
+            <h2>Regional Heatwave Outlook</h2>
+          </div>
+        </div>
+
+        <p>
+          {selected.name} currently has a{" "}
+          <strong>{risk.toLowerCase()}</strong>{" "}
+          recorded heatwave risk level, with a stored
+          probability of{" "}
+          <strong>
+            {Number.isFinite(probability)
+              ? `${probability}%`
+              : "N/A"}
+          </strong>.
+        </p>
+
+        <p>
+          The assessment considers temperature,
+          humidity, wind speed, and heat index.
+          The explanations are rule-based and
+          illustrative; they are not generated
+          by a trained AI model.
+        </p>
+      </section>
+
+    </div>
+  );
 }
 function Factor({icon,title,value,note}) {return <div className="factor-card"><span>{icon}</span><small>{title}</small><strong>{value}</strong><em>{note}</em></div>}
 
-function Alerts() { return <section className="alerts-page">{alerts.map(a=><div className={"panel alert-card "+riskClass(a.level)} key={a.region}><div className={"alert-icon "+riskClass(a.level)}><AlertTriangle size={21}/></div><div className="alert-content"><div><span className={"risk-pill "+riskClass(a.level)}>{a.level} Alert</span><h2>{a.region}</h2></div><p>{a.text}</p><div className="alert-meta"><span>Issued {a.time}</span><span>👥 {a.recipients} stakeholder{a.recipients!==1?"s":""}</span><span>● Sent</span></div></div><button className="outline-btn">View details</button></div>)}</section> }
+
+function Alerts({ regions = [] }) {
+  const [expandedRegion, setExpandedRegion] = useState(null);
+
+  const getAlertMessage = (region) => {
+    if (region.risk === "Severe") {
+      return `Severe heat conditions have been recorded in ${region.name}. Avoid prolonged outdoor exposure, especially during peak afternoon hours.`;
+    }
+
+    if (region.risk === "High") {
+      return `High heat exposure has been recorded in ${region.name}. Stay hydrated, take regular breaks, and monitor local weather updates.`;
+    }
+
+    return `Moderate heat exposure has been recorded in ${region.name}. Continue taking precautions during hot weather.`;
+  };
+
+  const getPrecautions = (risk) => {
+    if (risk === "Severe") {
+      return [
+        "Limit outdoor activities during peak heat hours.",
+        "Drink water regularly and stay in shaded or cool areas.",
+        "Check on elderly people, children, and vulnerable residents.",
+        "Seek medical assistance if symptoms of heat illness occur."
+      ];
+    }
+
+    if (risk === "High") {
+      return [
+        "Avoid unnecessary exposure to direct sunlight.",
+        "Drink sufficient water throughout the day.",
+        "Take frequent breaks during outdoor activities."
+      ];
+    }
+
+    return [
+      "Stay hydrated.",
+      "Wear light and breathable clothing.",
+      "Monitor local weather conditions."
+    ];
+  };
+
+  return (
+    <section className="alerts-page">
+      {regions.length === 0 ? (
+        <div className="panel">
+          <h2>No region data available</h2>
+          <p>
+            Unable to generate regional risk summaries.
+            Please check the Flask backend connection.
+          </p>
+        </div>
+      ) : (
+        regions.map((region) => {
+          const isExpanded = expandedRegion === region.name;
+
+          return (
+            <div
+              className={
+                "panel alert-card " + riskClass(region.risk)
+              }
+              key={region.id}
+            >
+              <div
+                className={
+                  "alert-icon " + riskClass(region.risk)
+                }
+              >
+                <AlertTriangle size={21} />
+              </div>
+
+              <div className="alert-content">
+                <div>
+                  <span
+                    className={
+                      "risk-pill " + riskClass(region.risk)
+                    }
+                  >
+                    {region.risk} Risk
+                  </span>
+
+                  <h2>{region.name}</h2>
+                </div>
+
+                <p>{getAlertMessage(region)}</p>
+
+                <div className="alert-meta">
+                  <span>
+                    🌡️ Temperature: {region.temp}°C
+                  </span>
+
+                  <span>
+                    🔥 Heat Index: {region.heat}°C
+                  </span>
+
+                  <span>
+                    📊 Risk Probability: {region.probability}%
+                  </span>
+
+                  <span>● Risk assessment</span>
+                </div>
+
+                {isExpanded && (
+                  <div className="alert-details">
+                    <h3>Recommended Precautions</h3>
+
+                    <ul>
+                      {getPrecautions(region.risk).map(
+                        (precaution, index) => (
+                          <li key={index}>
+                            {precaution}
+                          </li>
+                        )
+                      )}
+                    </ul>
+
+                    <p>
+                      <strong>Advisory information:</strong>{" "}
+                      This is a demonstration risk advisory
+                      generated from the available regional
+                      weather data. It is not an official
+                      government-issued alert.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="outline-btn"
+                onClick={() =>
+                  setExpandedRegion(
+                    isExpanded ? null : region.name
+                  )
+                }
+              >
+                {isExpanded ? "Hide details" : "View details"}
+              </button>
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+}
+
 
 function Stakeholders() {
   const [filter, setFilter] = useState("");
-  const [sent, setSent] = useState({});
-  const list = stakeholders.filter(s => `${s.name} ${s.org} ${s.region}`.toLowerCase().includes(filter.toLowerCase()));
-  return <section className="panel table-panel">
-    <div className="panel-head">
-      <div><span className="section-kicker">ALERT NETWORK</span><h2>Stakeholders</h2><p className="panel-subtitle">People and organizations who receive heatwave advisories.</p></div>
-      <span className="count-pill">{stakeholders.length} registered</span>
-    </div>
-    <div className="stake-toolbar"><div className="stake-search"><Search size={15}/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search stakeholder, organization or region..." /></div><span className="count-pill">{list.length} shown</span></div>
-    <div className="stake-grid">
-      {list.map(s=>{ const isSent = sent[s.name] || s.status === "Sent"; return <div className="stake-card" key={s.name}>
-        <div className="person-avatar">{s.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</div>
-        <div><strong>{s.name}</strong><span>{s.org}</span><small>📍 {s.region}</small></div>
-        <div className="stake-actions"><em className={isSent ? "stake-sent" : "stake-pending"}><i></i>{isSent ? "Sent" : "Pending"}</em><button className="small-action" onClick={()=>setSent({...sent,[s.name]:true})}>{isSent ? "Resend" : "Notify"}</button></div>
-      </div>})}
-    </div>
-    {list.length === 0 && <div className="empty-state"><Users size={28}/><strong>No stakeholders found</strong><span>Try a different name, organization or region.</span></div>}
-  </section>
+  const [stakeholderData, setStakeholderData] = useState([]);
+  const [advisoryRecords, setAdvisoryRecords] = useState([]);
+  const [loadingStakeholders, setLoadingStakeholders] = useState(true);
+  const [stakeholderError, setStakeholderError] = useState("");
+  const [selectedStakeholder, setSelectedStakeholder] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadStakeholders() {
+      try {
+        const [stakeholderResponse, advisoryResponse] =
+          await Promise.all([
+            fetch("http://127.0.0.1:5000/stakeholders"),
+            fetch("http://127.0.0.1:5000/advisory-stakeholders")
+          ]);
+
+        if (!stakeholderResponse.ok || !advisoryResponse.ok) {
+          throw new Error("Failed to retrieve stakeholder records");
+        }
+
+        const stakeholdersJson = await stakeholderResponse.json();
+        const advisoriesJson = await advisoryResponse.json();
+
+        if (active) {
+          setStakeholderData(stakeholdersJson);
+          setAdvisoryRecords(advisoriesJson);
+          setStakeholderError("");
+        }
+      } catch (error) {
+        console.error("Stakeholder API error:", error);
+
+        if (active) {
+          setStakeholderError(
+            "Unable to load stakeholder records from Flask."
+          );
+        }
+      } finally {
+        if (active) {
+          setLoadingStakeholders(false);
+        }
+      }
+    }
+
+    loadStakeholders();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const list = stakeholderData.filter((s) =>
+    `${s.name ?? ""} ${s.organization ?? ""} ${s.region ?? ""}`
+      .toLowerCase()
+      .includes(filter.toLowerCase())
+  );
+
+  function getLatestAdvisory(stakeholderId) {
+    return advisoryRecords.find(
+      (record) =>
+        String(record.stakeholder_id) === String(stakeholderId)
+    );
+  }
+
+  return (
+    <section className="panel table-panel">
+      <div className="panel-head">
+        <div>
+          <span className="section-kicker">
+            DATABASE-CONNECTED ALERT NETWORK
+          </span>
+          <h2>Stakeholders</h2>
+          <p className="panel-subtitle">
+            Registered people and organizations associated
+            with regional heatwave advisories.
+          </p>
+        </div>
+
+        <span className="count-pill">
+          {stakeholderData.length} registered
+        </span>
+      </div>
+
+      <div className="stake-toolbar">
+        <div className="stake-search">
+          <Search size={15} />
+
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search stakeholder, organization or region..."
+          />
+        </div>
+
+        <span className="count-pill">
+          {list.length} shown
+        </span>
+      </div>
+
+      {loadingStakeholders && (
+        <div className="empty-state">
+          <strong>Loading stakeholders...</strong>
+          <span>Retrieving records from PostgreSQL.</span>
+        </div>
+      )}
+
+      {stakeholderError && (
+        <div className="empty-state">
+          <AlertTriangle size={28} />
+          <strong>Connection error</strong>
+          <span>{stakeholderError}</span>
+        </div>
+      )}
+
+      {!loadingStakeholders && !stakeholderError && (
+        <>
+          <div className="stake-grid">
+            {list.map((s) => {
+              const advisory = getLatestAdvisory(s.stakeholder_id);
+              const status = advisory?.status || "No advisory";
+              const hasAdvisory = Boolean(advisory);
+
+              return (
+                <div
+                  className="stake-card"
+                  key={s.stakeholder_id}
+                >
+                  <div className="person-avatar">
+                    {(s.name || "?")
+                      .split(" ")
+                      .filter(Boolean)
+                      .map((word) => word[0])
+                      .slice(0, 2)
+                      .join("")
+                      .toUpperCase()}
+                  </div>
+
+                  <div>
+                    <strong>{s.name}</strong>
+                    <span>{s.organization || "Not specified"}</span>
+                    <small>
+                      📍 {s.region || "Unassigned region"}
+                    </small>
+                  </div>
+
+                  <div className="stake-actions">
+                    <em
+                      className={
+                        status.toLowerCase() === "sent"
+                          ? "stake-sent"
+                          : "stake-pending"
+                      }
+                    >
+                      <i></i>
+                      {status}
+                    </em>
+
+                    <button
+                      type="button"
+                      className="small-action"
+                      onClick={() =>
+                        setSelectedStakeholder(
+                          selectedStakeholder === s.stakeholder_id
+                            ? null
+                            : s.stakeholder_id
+                        )
+                      }
+                    >
+                      {selectedStakeholder === s.stakeholder_id
+                        ? "Hide"
+                        : "Details"}
+                    </button>
+                  </div>
+
+                  {selectedStakeholder === s.stakeholder_id && (
+                    <div
+                      className="alert-details"
+                      style={{ gridColumn: "1 / -1" }}
+                    >
+                      <h3>Stakeholder Details</h3>
+
+                      <p>
+                        <strong>Organization:</strong>{" "}
+                        {s.organization || "Not specified"}
+                      </p>
+
+                      <p>
+                        <strong>Region:</strong>{" "}
+                        {s.region || "Not assigned"}
+                      </p>
+
+                      <p>
+                        <strong>Advisory status:</strong>{" "}
+                        {status}
+                      </p>
+
+                      {hasAdvisory && (
+                        <>
+                          <p>
+                            <strong>Advisory ID:</strong>{" "}
+                            {advisory.advisory_id}
+                          </p>
+
+                          <p>
+                            <strong>Alert level:</strong>{" "}
+                            {advisory.alert_level}
+                          </p>
+
+                          <p>
+                            <strong>Recorded time:</strong>{" "}
+                            {advisory.sent_time || "Not available"}
+                          </p>
+                        </>
+                      )}
+
+                      {!hasAdvisory && (
+                        <p>
+                          No advisory assignment has been
+                          recorded for this stakeholder.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {list.length === 0 && (
+            <div className="empty-state">
+              <Users size={28} />
+              <strong>No stakeholders found</strong>
+              <span>
+                Try another search or check your database records.
+              </span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
+
 
 function NotificationPanel({notifications, onClose, onClear}) {
   return <div className="top-popover notification-panel">
@@ -387,6 +1575,417 @@ function SettingsPage({dark,setDark}) {
 function SettingRow({icon:Icon,title,description,control}) { return <div className="setting-row"><div className="setting-symbol"><Icon size={17}/></div><div className="setting-copy"><strong>{title}</strong><span>{description}</span></div>{control}</div> }
 function Toggle({checked,onChange}) { return <button className={`toggle ${checked ? "on" : ""}`} onClick={onChange} aria-label="Toggle setting"><span></span></button> }
 
-function Analytics() { return <><section className="analytics-grid"><div className="panel wide"><div className="panel-head"><div><span className="section-kicker">7-DAY TREND</span><h2>Regional Temperature</h2></div></div><ResponsiveContainer width="100%" height={310}><LineChart data={history}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="day"/><YAxis domain={[30,48]}/><Tooltip/><Line dataKey="Pune" stroke="#ff7a2f" strokeWidth={3}/><Line dataKey="Mumbai" stroke="#2784ff" strokeWidth={3}/><Line dataKey="Nagpur" stroke="#8b5cf6" strokeWidth={3}/></LineChart></ResponsiveContainer></div><div className="panel"><div className="panel-head"><div><span className="section-kicker">RISK DISTRIBUTION</span><h2>Current Risk</h2></div></div><ResponsiveContainer width="100%" height={260}><PieChart><Pie data={[{name:"Severe",value:2},{name:"High",value:2},{name:"Moderate",value:1}]} dataKey="value" innerRadius={65} outerRadius={95} paddingAngle={4}>{[0,1,2].map((x,i)=><Cell key={i} fill={["#ef4444","#f59e0b","#eab308"][i]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer><div className="pie-legend"><span><i className="red"></i>Severe 2</span><span><i className="orange"></i>High 2</span><span><i className="yellow"></i>Moderate 1</span></div></div></section><section className="panel"><div className="panel-head"><div><span className="section-kicker">REGIONAL COMPARISON</span><h2>Current Temperatures</h2></div></div><ResponsiveContainer width="100%" height={280}><BarChart data={regions}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name"/><YAxis domain={[0,50]}/><Tooltip/><Bar dataKey="temp" fill="#ff7a2f" radius={[6,6,0,0]}/><Bar dataKey="heat" fill="#ef4444" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer></section></> }
+
+function Analytics({ regions = [] }) {
+  const [readings, setReadings] = useState([]);
+  const [selectedRegion, setSelectedRegion] = useState("All");
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadReadings() {
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:5000/readings"
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to load historical readings");
+        }
+
+        const data = await response.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error("Invalid readings response");
+        }
+
+        if (active) {
+          setReadings(data);
+          setHistoryError("");
+        }
+      } catch (error) {
+        console.error("Historical readings error:", error);
+
+        if (active) {
+          setHistoryError(
+            "Unable to retrieve historical data from Flask."
+          );
+        }
+      } finally {
+        if (active) {
+          setLoadingHistory(false);
+        }
+      }
+    }
+
+    loadReadings();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const regionNames = [
+    ...new Set(readings.map((r) => r.region).filter(Boolean))
+  ].sort();
+
+  const filteredReadings = readings.filter(
+    (r) =>
+      selectedRegion === "All" ||
+      r.region === selectedRegion
+  );
+
+  // Use actual timestamps rather than fabricated dates.
+  // Each reading remains a separate observation.
+  const chronological = [...filteredReadings]
+    .filter(
+      (r) =>
+        r.reading_time &&
+        Number.isFinite(Date.parse(r.reading_time))
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(a.reading_time) -
+        Date.parse(b.reading_time)
+    );
+
+  const chartData = chronological.map((r) => ({
+    time: new Date(r.reading_time).toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit"
+    }),
+    temperature:
+      r.temperature == null ? null : Number(r.temperature),
+    heatIndex:
+      r.heat_index == null ? null : Number(r.heat_index),
+    humidity:
+      r.humidity == null ? null : Number(r.humidity),
+    region: r.region,
+    station: r.station_name
+  }));
+
+  const temperatures = filteredReadings
+    .map((r) => Number(r.temperature))
+    .filter(Number.isFinite);
+
+  const heatIndices = filteredReadings
+    .filter((r) => r.heat_index != null)
+    .map((r) => Number(r.heat_index))
+    .filter(Number.isFinite);
+
+  const maximumTemperature = temperatures.length
+    ? Math.max(...temperatures).toFixed(1)
+    : "N/A";
+
+  const averageHeatIndex = heatIndices.length
+    ? (
+        heatIndices.reduce((sum, value) => sum + value, 0) /
+        heatIndices.length
+      ).toFixed(1)
+    : "N/A";
+
+  const riskCounts = ["Severe", "High", "Moderate"].map(
+    (risk) => ({
+      name: risk,
+      value: regions.filter(
+        (r) =>
+          r.risk?.toLowerCase() === risk.toLowerCase()
+      ).length
+    })
+  );
+
+  const riskColors = {
+    Severe: "#ef4444",
+    High: "#f59e0b",
+    Moderate: "#eab308"
+  };
+
+  const comparisonData = regions.map((r) => ({
+    name: r.name,
+    temp: Number(r.temp),
+    heat: Number(r.heat)
+  }));
+
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">
+              POSTGRESQL WEATHER HISTORY
+            </span>
+            <h2>Historical Weather Analytics</h2>
+            <p className="panel-subtitle">
+              Explore recorded weather observations and
+              compare regional heatwave conditions.
+            </p>
+          </div>
+        </div>
+
+        <div className="stake-toolbar">
+          <div>
+            <strong>Filter by Region</strong>
+          </div>
+
+          <select
+            value={selectedRegion}
+            onChange={(e) =>
+              setSelectedRegion(e.target.value)
+            }
+            className="outline-btn"
+          >
+            <option value="All">All Regions</option>
+
+            {regionNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {loadingHistory && (
+          <p>Loading historical records...</p>
+        )}
+
+        {historyError && (
+          <p>{historyError}</p>
+        )}
+
+        {!loadingHistory && !historyError && (
+          <div className="factor-grid">
+            <Factor
+              icon="📊"
+              title="Recorded Observations"
+              value={String(filteredReadings.length)}
+              note="Database records"
+            />
+
+            <Factor
+              icon="🌡️"
+              title="Maximum Temperature"
+              value={
+                maximumTemperature === "N/A"
+                  ? "N/A"
+                  : `${maximumTemperature}°C`
+              }
+              note="Recorded maximum"
+            />
+
+            <Factor
+              icon="🔥"
+              title="Average Heat Index"
+              value={
+                averageHeatIndex === "N/A"
+                  ? "N/A"
+                  : `${averageHeatIndex}°C`
+              }
+              note="Recorded average"
+            />
+
+            <Factor
+              icon="📍"
+              title="Regions in History"
+              value={String(regionNames.length)}
+              note="Available regions"
+            />
+          </div>
+        )}
+      </section>
+
+      {!loadingHistory && !historyError && (
+        <section className="analytics-grid">
+          <div className="panel wide">
+            <div className="panel-head">
+              <div>
+                <span className="section-kicker">
+                  RECORDED WEATHER OBSERVATIONS
+                </span>
+                <h2>Temperature & Heat Index Trend</h2>
+              </div>
+            </div>
+
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={310}>
+                <LineChart data={chartData}>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                  />
+
+                  <XAxis
+                    dataKey="time"
+                    minTickGap={25}
+                  />
+
+                  <YAxis domain={["auto", "auto"]} />
+
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) {
+                        return null;
+                      }
+
+                      const point = payload[0].payload;
+
+                      return (
+                        <div
+                          style={{
+                            background: "#1e293b",
+                            color: "#fff",
+                            padding: 12,
+                            borderRadius: 8
+                          }}
+                        >
+                          <strong>{point.region}</strong>
+                          <p>{point.station}</p>
+                          <p>{point.time}</p>
+                          <p>
+                            Temperature: {point.temperature}°C
+                          </p>
+                          <p>
+                            Heat Index: {point.heatIndex}°C
+                          </p>
+                        </div>
+                      );
+                    }}
+                  />
+
+                  <Line
+                    type="monotone"
+                    dataKey="temperature"
+                    name="Temperature"
+                    stroke="#ff7a2f"
+                    strokeWidth={3}
+                    connectNulls={false}
+                  />
+
+                  <Line
+                    type="monotone"
+                    dataKey="heatIndex"
+                    name="Heat Index"
+                    stroke="#ef4444"
+                    strokeWidth={3}
+                    connectNulls={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <p>No historical readings available.</p>
+            )}
+          </div>
+
+          <div className="panel">
+            <div className="panel-head">
+              <div>
+                <span className="section-kicker">
+                  CURRENT DATABASE RISK
+                </span>
+                <h2>Risk Distribution</h2>
+              </div>
+            </div>
+
+            {regions.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie
+                      data={riskCounts.filter(
+                        (item) => item.value > 0
+                      )}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={65}
+                      outerRadius={95}
+                      paddingAngle={4}
+                    >
+                      {riskCounts
+                        .filter((item) => item.value > 0)
+                        .map((item) => (
+                          <Cell
+                            key={item.name}
+                            fill={riskColors[item.name]}
+                          />
+                        ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+
+                <div className="pie-legend">
+                  {riskCounts.map((item) => (
+                    <span key={item.name}>
+                      <i
+                        style={{
+                          display: "inline-block",
+                          width: 9,
+                          height: 9,
+                          borderRadius: "50%",
+                          background: riskColors[item.name],
+                          marginRight: 6
+                        }}
+                      />
+                      {item.name} {item.value}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p>No current risk data available.</p>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <span className="section-kicker">
+              REGIONAL COMPARISON
+            </span>
+            <h2>Current Temperatures</h2>
+          </div>
+        </div>
+
+        {comparisonData.length > 0 ? (
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={comparisonData}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+              />
+
+              <XAxis dataKey="name" />
+
+              <YAxis domain={[0, "auto"]} />
+
+              <Tooltip />
+
+              <Bar
+                dataKey="temp"
+                name="Temperature"
+                fill="#ff7a2f"
+                radius={[6, 6, 0, 0]}
+              />
+
+              <Bar
+                dataKey="heat"
+                name="Heat Index"
+                fill="#ef4444"
+                radius={[6, 6, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <p>No regional comparison data available.</p>
+        )}
+      </section>
+    </>
+  );
+}
 
 export default App;
