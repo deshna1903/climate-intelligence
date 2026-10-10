@@ -91,8 +91,8 @@ useEffect(() => {
   async function loadDashboard() {
     try {
       const response = await fetch(
-        "http://127.0.0.1:5000/dashboard"
-      );
+  "https://climateiq-backend.onrender.com/dashboard"
+);
 
       if (!response.ok) {
         throw new Error("Dashboard API failed");
