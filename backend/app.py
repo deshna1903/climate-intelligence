@@ -1,3 +1,6 @@
+import os
+import psycopg2
+
 from flask import Flask, jsonify
 from database import get_connection
 from flask_cors import CORS
