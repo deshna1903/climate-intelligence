@@ -1,3 +1,5 @@
+import QueryLab from "./QueryLab";
+import { API_BASE } from "./api";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, BarChart3, Bell, ChevronDown, CloudSun,
@@ -61,7 +63,7 @@ const stakeholders = [
 const nav = [
   ["Dashboard", LayoutDashboard], ["Live Weather", Thermometer], ["Regions & Stations", Map],
   ["Forecast", CloudSun], ["AI Prediction", Zap], ["Alerts & Advisories", Bell],
-  ["Stakeholders", Users], ["Historical Analytics", BarChart3]
+  ["Stakeholders", Users], ["Historical Analytics", BarChart3], ["DBMS Query Lab", Database]
 ];
 
 function riskClass(risk) {
@@ -91,7 +93,7 @@ useEffect(() => {
   async function loadDashboard() {
     try {
       const response = await fetch(
-  "https://climateiq-backend.onrender.com/dashboard"
+  `${API_BASE}/dashboard`
 );
 
       if (!response.ok) {
@@ -182,26 +184,6 @@ useEffect(() => {
     r.name.toLowerCase().includes(search.toLowerCase())
   ), [liveRegions, search]);
 
-if (loading) {
-  return (
-    <div style={{ padding: "40px", textAlign: "center" }}>
-      Loading climate data...
-    </div>
-  );
-}
-
-if (error) {
-  return (
-    <div style={{ padding: "40px", textAlign: "center" }}>
-      <h2>Unable to load climate data</h2>
-      <p>{error}</p>
-      <p>Please make sure the Flask backend is running.</p>
-    </div>
-  );
-}
-
-
-
   return (
     <div className={dark ? "app dark" : "app"}>
       <aside className={sidebar ? "sidebar open" : "sidebar"}>
@@ -245,11 +227,14 @@ if (error) {
 
         <div className="content">
           <div className="page-heading">
-            <div><div className="eyebrow"><span className="live-dot"></span> LIVE MONITORING</div><h1>{page}</h1><p>Real-time climate intelligence for heatwave monitoring, prediction and early warning.</p></div>
-            <div className="updated"><RefreshCw size={14}/> Last updated <strong>2:35 PM</strong></div>
+            <div><div className="eyebrow"><span className="live-dot"></span> {page === "DBMS Query Lab" ? "DATABASE EXPLORER" : "LIVE MONITORING"}</div><h1>{page}</h1><p>{page === "DBMS Query Lab" ? "SQL demonstrations and evidence from your DBMS experiments." : "Real-time climate intelligence for heatwave monitoring, prediction and early warning."}</p></div>
+            {page !== "DBMS Query Lab" && <div className="updated"><RefreshCw size={14}/> Last updated <strong>2:35 PM</strong></div>}
           </div>
 
-          {page === "Dashboard" && <Dashboard selected={selected} setSelected={setSelected} filteredRegions={filteredRegions} />}
+          {page === "DBMS Query Lab" && <QueryLab />}
+          {page !== "DBMS Query Lab" && loading && <p role="status">Loading climate data...</p>}
+          {page !== "DBMS Query Lab" && error && <div className="lab-error" role="alert"><AlertTriangle size={18}/><span>{error}. Check your API configuration. DBMS Query Lab remains available from the sidebar.</span></div>}
+          {page === "Dashboard" && !loading && !error && <Dashboard selected={selected} setSelected={setSelected} filteredRegions={filteredRegions} />}
           {page === "Live Weather" && <LiveWeather
   selected={selected}
   setSelected={setSelected}
@@ -590,8 +575,8 @@ function Regions({ regions: rs, selected, setSelected }) {
       try {
         const [stationResponse, regionResponse] =
           await Promise.all([
-            fetch("http://127.0.0.1:5000/stations"),
-            fetch("http://127.0.0.1:5000/regions")
+            fetch(`${API_BASE}/stations`),
+            fetch(`${API_BASE}/regions`)
           ]);
 
         if (!stationResponse.ok || !regionResponse.ok) {
@@ -1305,8 +1290,8 @@ function Stakeholders() {
       try {
         const [stakeholderResponse, advisoryResponse] =
           await Promise.all([
-            fetch("http://127.0.0.1:5000/stakeholders"),
-            fetch("http://127.0.0.1:5000/advisory-stakeholders")
+            fetch(`${API_BASE}/stakeholders`),
+            fetch(`${API_BASE}/advisory-stakeholders`)
           ]);
 
         if (!stakeholderResponse.ok || !advisoryResponse.ok) {
@@ -1588,7 +1573,7 @@ function Analytics({ regions = [] }) {
     async function loadReadings() {
       try {
         const response = await fetch(
-          "http://127.0.0.1:5000/readings"
+          `${API_BASE}/readings`
         );
 
         if (!response.ok) {

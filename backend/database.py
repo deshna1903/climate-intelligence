@@ -10,10 +10,12 @@ def get_connection():
     if database_url:
         connection = psycopg2.connect(
             database_url,
+            connect_timeout=10,
             sslmode="require"
         )
     else:
         connection = psycopg2.connect(
+            connect_timeout=10,
             host=os.getenv("DB_HOST", "localhost"),
             database=os.getenv("DB_NAME", "climate_intelligence"),
             user=os.getenv("DB_USER", "postgres"),

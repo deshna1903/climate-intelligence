@@ -1,0 +1,216 @@
+{
+  "experiments": [
+    {
+      "number": 1,
+      "title": "ER / EER design",
+      "application": "Region \u2192 Weather_Station \u2192 Sensor \u2192 Sensor_Reading represents the observation path. Forecast \u2192 Heatwave_Prediction \u2192 Advisory represents the warning path. Advisory_Stakeholder connects advisories and recipients as a many-to-many relationship.",
+      "evidence": "Explore joined readings and inspect foreign keys. EER specializations are not verified by these queries."
+    },
+    {
+      "number": 2,
+      "title": "Mapping EER to relations",
+      "application": "Entities become separate tables; foreign keys connect them. Advisory_Stakeholder stores the advisory-recipient relationship.",
+      "evidence": "The constraint inspector reports actual primary, foreign and unique keys; verify a composite or unique pair on the bridge table."
+    },
+    {
+      "number": 3,
+      "title": "DDL and constraints",
+      "application": "Tables, primary keys, foreign keys and CHECK constraints define the database structure and valid values.",
+      "evidence": "Inspect deployed column definitions and constraints. The repository has no original schema migration, so constraints are reported from PostgreSQL rather than assumed."
+    },
+    {
+      "number": 4,
+      "title": "DML and SQL retrieval",
+      "application": "Existing Flask endpoints SELECT climate records. The temporary-table demo runs INSERT, UPDATE, SELECT and DELETE without changing climate records.",
+      "evidence": "Run joined readings or the DML / transaction demo. Production insert/update/delete workflows are not implemented."
+    },
+    {
+      "number": 5,
+      "title": "Aggregates, ORDER BY, GROUP BY, LIKE and HAVING",
+      "application": "Summarize temperature by region, retain groups with enough readings, sort hottest regions first and search region names.",
+      "evidence": "Run Regional statistics and Region name search; their SQL and returned rows demonstrate each clause."
+    },
+    {
+      "number": 6,
+      "title": "Nested queries and views",
+      "application": "A nested AVG query finds readings above the regional average. A reusable monthly view summarizes readings for historical analytics.",
+      "evidence": "The subquery runs on existing tables. Monthly view requires backend/dbms_setup.sql; missing setup produces an explicit error."
+    },
+    {
+      "number": 7,
+      "title": "Authorization: GRANT and REVOKE",
+      "application": "Database privileges determine what the backend connection can read or modify.",
+      "evidence": "Inspect effective table privileges for the connected role. GRANT/REVOKE examples are documented for an administrator; the browser does not change roles or permissions. RBAC/DAC/MAC are not claimed as fully implemented."
+    },
+    {
+      "number": 8,
+      "title": "Indexing and query optimization",
+      "application": "Indexes can accelerate sensor/date filters and foreign-key joins. PostgreSQL chooses the plan based on table size and selectivity.",
+      "evidence": "Inspect existing indexes and run EXPLAIN ANALYZE on the joined-readings query. Optional indexes are in backend/dbms_setup.sql. A small table may still use a sequential scan."
+    },
+    {
+      "number": 9,
+      "title": "ACID, concurrency and TCL",
+      "application": "Read demonstrations use read-only transactions. The temporary-table demo uses BEGIN, SAVEPOINT, ROLLBACK TO SAVEPOINT and final ROLLBACK.",
+      "evidence": "Live before/after rows verify rollback and savepoint behavior. COMMIT durability and simultaneous-session concurrency require the separate walkthrough in docs/DBMS_EXPERIMENTS.md."
+    }
+  ],
+  "queries": [
+    {
+      "id": "readings",
+      "title": "Joined sensor readings",
+      "concepts": "SELECT \u00b7 JOIN \u00b7 WHERE \u00b7 ORDER BY",
+      "experiments": [
+        1,
+        2,
+        4
+      ],
+      "description": "Trace a reading through its sensor, station and region. Dates are inclusive; results are bounded.",
+      "sql": "SELECT sr.Reading_ID, sr.Reading_Time, sr.Temperature, sr.Humidity,\n       sr.Heat_Index, ws.Station_Name, r.Region_Name\nFROM Sensor_Reading sr\nJOIN Sensor s ON sr.Sensor_ID = s.Sensor_ID\nJOIN Weather_Station ws ON s.Station_ID = ws.Station_ID\nJOIN Region r ON ws.Region_ID = r.Region_ID\nWHERE (%(region)s IS NULL OR r.Region_Name = %(region)s)\n  AND (%(start)s IS NULL OR sr.Reading_Time >= %(start)s::date)\n  AND (%(end)s IS NULL OR sr.Reading_Time < %(end)s::date + INTERVAL '1 day')\nORDER BY sr.Reading_Time DESC, sr.Reading_ID DESC\nLIMIT %(limit)s",
+      "filters": [
+        "region",
+        "dates"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "statistics",
+      "title": "Regional statistics",
+      "concepts": "AVG \u00b7 MIN \u00b7 MAX \u00b7 COUNT \u00b7 GROUP BY \u00b7 HAVING",
+      "experiments": [
+        5
+      ],
+      "description": "Summarize observed temperature and filter regions by minimum reading count.",
+      "sql": "SELECT r.Region_Name, COUNT(*) AS reading_count,\n       ROUND(AVG(sr.Temperature)::numeric, 2) AS avg_temperature,\n       MIN(sr.Temperature) AS min_temperature, MAX(sr.Temperature) AS peak_temperature\nFROM Region r JOIN Weather_Station ws ON ws.Region_ID = r.Region_ID\nJOIN Sensor s ON s.Station_ID = ws.Station_ID\nJOIN Sensor_Reading sr ON sr.Sensor_ID = s.Sensor_ID\nWHERE (%(region)s IS NULL OR r.Region_Name = %(region)s)\nGROUP BY r.Region_ID, r.Region_Name\nHAVING COUNT(*) >= %(minimum)s\nORDER BY peak_temperature DESC NULLS LAST, r.Region_Name\nLIMIT %(limit)s",
+      "filters": [
+        "region",
+        "minimum"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "search",
+      "title": "Region name search",
+      "concepts": "LIKE \u00b7 ORDER BY",
+      "experiments": [
+        4,
+        5
+      ],
+      "description": "Search using SQL LIKE. Percent and underscore in the search text act as SQL wildcards.",
+      "sql": "SELECT Region_ID, Region_Name, State, Climate_Zone, Population\nFROM Region WHERE LOWER(Region_Name) LIKE LOWER(%(pattern)s)\nORDER BY Region_Name LIMIT %(limit)s",
+      "filters": [
+        "search"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "above-average",
+      "title": "Readings above regional average",
+      "concepts": "CORRELATED SUBQUERY \u00b7 AVG",
+      "experiments": [
+        6
+      ],
+      "description": "Compare each reading with the average across all sensors in its own region.",
+      "sql": "SELECT r.Region_Name, ws.Station_Name, sr.Reading_Time, sr.Temperature\nFROM Sensor_Reading sr JOIN Sensor s ON s.Sensor_ID = sr.Sensor_ID\nJOIN Weather_Station ws ON ws.Station_ID = s.Station_ID\nJOIN Region r ON r.Region_ID = ws.Region_ID\nWHERE (%(region)s IS NULL OR r.Region_Name = %(region)s)\n  AND sr.Temperature > (\n    SELECT AVG(sr2.Temperature) FROM Sensor_Reading sr2\n    JOIN Sensor s2 ON s2.Sensor_ID = sr2.Sensor_ID\n    JOIN Weather_Station ws2 ON ws2.Station_ID = s2.Station_ID\n    WHERE ws2.Region_ID = r.Region_ID)\nORDER BY sr.Temperature DESC, sr.Reading_ID LIMIT %(limit)s",
+      "filters": [
+        "region"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "monthly",
+      "title": "Monthly climate view",
+      "concepts": "VIEW \u00b7 GROUP BY",
+      "experiments": [
+        3,
+        5,
+        6
+      ],
+      "description": "Read a deployed SQL view. Install backend/dbms_setup.sql first if the view is missing.",
+      "sql": "SELECT * FROM climate_lab_monthly_stats\nWHERE (%(region)s IS NULL OR region_name = %(region)s)\nORDER BY month DESC, region_name LIMIT %(limit)s",
+      "filters": [
+        "region"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "columns",
+      "title": "Deployed table columns",
+      "concepts": "DDL \u00b7 DATA TYPES \u00b7 NOT NULL",
+      "experiments": [
+        2,
+        3
+      ],
+      "description": "Inspect actual column types, defaults and nullability in the public schema.",
+      "sql": "SELECT table_name, column_name, data_type, is_nullable, column_default\nFROM information_schema.columns WHERE table_schema = 'public'\nORDER BY table_name, ordinal_position LIMIT %(limit)s",
+      "filters": [],
+      "method": "GET"
+    },
+    {
+      "id": "constraints",
+      "title": "Keys and constraints",
+      "concepts": "PRIMARY KEY \u00b7 FOREIGN KEY \u00b7 UNIQUE \u00b7 CHECK",
+      "experiments": [
+        1,
+        2,
+        3
+      ],
+      "description": "Read the deployed constraint definitions, including the advisory-recipient relationship.",
+      "sql": "SELECT c.relname AS table_name, con.conname AS constraint_name,\n       pg_get_constraintdef(con.oid) AS definition\nFROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid\nJOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE n.nspname = 'public' ORDER BY c.relname, con.conname LIMIT %(limit)s",
+      "filters": [],
+      "method": "GET"
+    },
+    {
+      "id": "privileges",
+      "title": "Effective database privileges",
+      "concepts": "GRANT \u00b7 REVOKE \u00b7 ACCESS CONTROL",
+      "experiments": [
+        7
+      ],
+      "description": "Show the current backend database role and its effective privileges. This checks access; it does not grant or revoke it.",
+      "sql": "SELECT current_user AS database_role, tablename,\n       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT') AS can_select,\n       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT') AS can_insert,\n       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE') AS can_update,\n       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE') AS can_delete\nFROM pg_tables WHERE schemaname = 'public' ORDER BY tablename LIMIT %(limit)s",
+      "filters": [],
+      "method": "GET"
+    },
+    {
+      "id": "indexes",
+      "title": "Deployed indexes",
+      "concepts": "CREATE INDEX \u00b7 INDEX INSPECTION",
+      "experiments": [
+        8
+      ],
+      "description": "Inspect existing index definitions. Index presence alone does not prove a speed improvement.",
+      "sql": "SELECT tablename, indexname, indexdef FROM pg_indexes\nWHERE schemaname = 'public' ORDER BY tablename, indexname LIMIT %(limit)s",
+      "filters": [],
+      "method": "GET"
+    },
+    {
+      "id": "plan",
+      "title": "Reading query execution plan",
+      "concepts": "EXPLAIN ANALYZE \u00b7 BUFFERS",
+      "experiments": [
+        8
+      ],
+      "description": "Execute the bounded reading SELECT and inspect actual scan/join choices, timing and buffer usage.",
+      "sql": "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)\nSELECT sr.Reading_ID, sr.Reading_Time, sr.Temperature, sr.Humidity,\n       sr.Heat_Index, ws.Station_Name, r.Region_Name\nFROM Sensor_Reading sr\nJOIN Sensor s ON sr.Sensor_ID = s.Sensor_ID\nJOIN Weather_Station ws ON s.Station_ID = ws.Station_ID\nJOIN Region r ON ws.Region_ID = r.Region_ID\nWHERE (%(region)s IS NULL OR r.Region_Name = %(region)s)\n  AND (%(start)s IS NULL OR sr.Reading_Time >= %(start)s::date)\n  AND (%(end)s IS NULL OR sr.Reading_Time < %(end)s::date + INTERVAL '1 day')\nORDER BY sr.Reading_Time DESC, sr.Reading_ID DESC\nLIMIT %(limit)s",
+      "filters": [
+        "region",
+        "dates"
+      ],
+      "method": "GET"
+    },
+    {
+      "id": "transaction",
+      "title": "Temporary DML / transaction demo",
+      "concepts": "INSERT \u00b7 UPDATE \u00b7 DELETE \u00b7 SAVEPOINT \u00b7 ROLLBACK",
+      "experiments": [
+        4,
+        9
+      ],
+      "description": "Use a connection-local temporary table to show DML and partial rollback. The final rollback removes the entire demo; climate data is untouched.",
+      "sql": "BEGIN;\nCREATE TEMP TABLE climate_lab_demo (id integer PRIMARY KEY, temperature numeric);\nINSERT INTO climate_lab_demo VALUES (1, 40), (2, 42);\nSAVEPOINT before_changes;\nUPDATE climate_lab_demo SET temperature = 45 WHERE id = 1;\nDELETE FROM climate_lab_demo WHERE id = 2;\nSELECT * FROM climate_lab_demo ORDER BY id;\nROLLBACK TO SAVEPOINT before_changes;\nSELECT * FROM climate_lab_demo ORDER BY id;\nROLLBACK;",
+      "filters": [],
+      "method": "POST"
+    }
+  ]
+}
